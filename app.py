@@ -2,6 +2,14 @@ import io
 from PIL import Image
 import streamlit as st
 
+# ═══════════════════════════════════════════════════════════════════
+# 🔐 SECURITY SETTINGS — Edit these values to customize your app
+# ═══════════════════════════════════════════════════════════════════
+APP_PASSWORD = "KDPVIP2026"   # Change this to your secret password
+BRAND_NAME = "KDPEasy Studio"  # Change this to your brand name
+WELCOME_MESSAGE = "Welcome, VIP Customer!"  # Customize this greeting
+# ═══════════════════════════════════════════════════════════════════
+
 st.set_page_config(
     page_title="KDPEasy AI Upscaler",
     page_icon="🖼️",
@@ -46,16 +54,101 @@ CUSTOM_CSS = """
         border-left: 4px solid #4f46e5;
         margin-bottom: 1rem;
     }
+    .login-card {
+        background: white;
+        padding: 2.5rem 2rem;
+        border-radius: 16px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.08);
+        max-width: 480px;
+        margin: 3rem auto;
+        text-align: center;
+    }
+    .login-card h2 {
+        color: #1f2937;
+        margin-bottom: 0.5rem;
+    }
+    .login-card .brand {
+        color: #4f46e5;
+        font-weight: 700;
+        font-size: 1.1rem;
+        margin-bottom: 1.5rem;
+    }
+    .login-card .desc {
+        color: #64748b;
+        font-size: 0.95rem;
+        margin-bottom: 1.5rem;
+    }
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 🔐 PASSWORD GATE
+# ═══════════════════════════════════════════════════════════════════
+def check_password():
+    """Returns True if user has entered the correct password."""
+
+    if st.session_state.get("password_correct", False):
+        return True
+
+    # Show login screen
+    st.markdown(
+        f"""
+        <div class='login-card'>
+            <h2>🔐 {WELCOME_MESSAGE}</h2>
+            <div class='brand'>✨ {BRAND_NAME} ✨</div>
+            <div class='desc'>
+                This is an exclusive AI tool for our valued customers.<br>
+                Please enter your access password to continue.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        password = st.text_input(
+            "🔑 Access Password",
+            type="password",
+            placeholder="Enter your password here...",
+            key="password_input",
+        )
+
+        if st.button("🚀 Unlock App", width="stretch"):
+            if password == APP_PASSWORD:
+                st.session_state["password_correct"] = True
+                st.rerun()
+            else:
+                st.error("❌ Incorrect password. Please contact support if you need access.")
+
+        st.markdown(
+            "<p style='text-align:center;color:#94a3b8;font-size:0.85rem;margin-top:2rem;'>"
+            "💡 Don't have a password? This tool is exclusive to our email subscribers.<br>"
+            "Contact us to get access."
+            "</p>",
+            unsafe_allow_html=True,
+        )
+
+    return False
+
+
+# Stop the app here if password is not correct
+if not check_password():
+    st.stop()
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 🎨 MAIN APP (only loads after password is correct)
+# ═══════════════════════════════════════════════════════════════════
 
 TARGET_DPI = 300
 
 # 📚 KDP Book Size Presets (width × height in inches)
 KDP_BOOK_SIZES = {
-    "🔧 Custom (nhập kích thước riêng)": None,
-    "📕 6 × 9 in — Trade Paperback (phổ biến nhất)": (6.0, 9.0),
+    "🔧 Custom (enter your own size)": None,
+    "📕 6 × 9 in — Trade Paperback (most popular)": (6.0, 9.0),
     "📗 5 × 8 in — Mass Market": (5.0, 8.0),
     "📘 5.5 × 8.5 in — Digest": (5.5, 8.5),
     "📙 7 × 10 in — Textbook": (7.0, 10.0),
@@ -82,10 +175,10 @@ def convert_to_300dpi(
         target_w_px = int(round(target_width_in * TARGET_DPI))
 
         if force_exact and target_height_in:
-            # Ép đúng kích thước (có thể méo nếu aspect ratio khác)
+            # Force exact KDP dimensions (may distort if aspect ratio differs)
             target_h_px = int(round(target_height_in * TARGET_DPI))
         else:
-            # Giữ tỉ lệ ảnh gốc
+            # Preserve original aspect ratio
             aspect = img.height / img.width
             target_h_px = int(round(target_w_px * aspect))
 
@@ -105,11 +198,21 @@ def convert_to_300dpi(
     return buf, img.size
 
 
-st.title("🖼️ KDPEasy AI Upscaler")
+# Header with logout button
+header_col1, header_col2 = st.columns([5, 1])
+with header_col1:
+    st.title("🖼️ KDPEasy AI Upscaler")
+with header_col2:
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("🔒 Logout", width="stretch"):
+        st.session_state["password_correct"] = False
+        st.rerun()
+
 st.markdown(
-    "<p style='color:#64748b;font-size:1.05rem;'>"
-    "Convert your images to print-ready <b>300 DPI</b> for KDP and other publishing platforms."
-    "</p>",
+    f"<p style='color:#64748b;font-size:1.05rem;'>"
+    f"Convert your images to print-ready <b>300 DPI</b> for KDP and other publishing platforms.<br>"
+    f"<span style='color:#4f46e5;font-weight:600;'>✨ Exclusive tool by {BRAND_NAME}</span>"
+    f"</p>",
     unsafe_allow_html=True,
 )
 
@@ -161,15 +264,15 @@ else:
             "Output format",
             options=["PNG", "JPG"],
             horizontal=True,
-            help="PNG giữ độ trong suốt; JPG có dung lượng nhỏ hơn.",
+            help="PNG preserves transparency; JPG has smaller file size.",
         )
 
         st.markdown("**📚 KDP Book Size**")
         book_size_label = st.selectbox(
-            "Chọn kích thước sách KDP",
+            "Select KDP book size",
             options=list(KDP_BOOK_SIZES.keys()),
             index=0,
-            help="Chọn preset cho các size sách KDP phổ biến, hoặc Custom để tự nhập.",
+            help="Pick a preset for popular KDP book sizes, or choose Custom.",
             label_visibility="collapsed",
         )
 
@@ -186,22 +289,24 @@ else:
             needed_h_px = int(target_height_in * TARGET_DPI)
 
             st.info(
-                f"📏 **Kích thước mục tiêu:** {target_width_in} × {target_height_in} in  \n"
-                f"📐 **Pixel cần (300 DPI):** {needed_w_px} × {needed_h_px} px"
+                f"📏 **Target print size:** {target_width_in} × {target_height_in} in  \n"
+                f"📐 **Required pixels (300 DPI):** {needed_w_px} × {needed_h_px} px"
             )
 
             # Check pixel sufficiency
             if orig_w >= needed_w_px and orig_h >= needed_h_px:
-                st.success("✅ **Ảnh đủ pixel** cho size này — chất lượng in tốt!")
+                st.success("✅ **Image has enough pixels** — excellent print quality!")
             elif orig_w >= needed_w_px * 0.7 and orig_h >= needed_h_px * 0.7:
                 st.warning(
-                    f"⚠️ **Ảnh hơi nhỏ** — sẽ phóng to bằng Lanczos. Chất lượng chấp nhận được.  \n"
-                    f"Khuyến nghị: ảnh gốc ≥ {needed_w_px} × {needed_h_px} px."
+                    f"⚠️ **Image is slightly small** — will be upscaled with Lanczos. "
+                    f"Acceptable quality.  \n"
+                    f"Recommended: source image ≥ {needed_w_px} × {needed_h_px} px."
                 )
             else:
                 st.error(
-                    f"❌ **Ảnh QUÁ NHỎ!** Khi in sẽ bị mờ rõ rệt.  \n"
-                    f"Cần ảnh ≥ {needed_w_px} × {needed_h_px} px. Khuyến nghị dùng AI Upscale trước."
+                    f"❌ **Image is TOO SMALL!** Print will be visibly blurry.  \n"
+                    f"Need at least {needed_w_px} × {needed_h_px} px. "
+                    f"Recommended: use an AI Upscaler first (e.g., Upscayl)."
                 )
 
             # Aspect ratio comparison
@@ -212,28 +317,28 @@ else:
             if ratio_diff > 0.02:
                 st.markdown(
                     f"<div style='font-size:0.85rem;color:#64748b;'>"
-                    f"📊 Tỉ lệ ảnh gốc: <b>{img_ratio:.3f}</b> | "
-                    f"Tỉ lệ KDP: <b>{target_ratio:.3f}</b> "
-                    f"(lệch {ratio_diff*100:.1f}%)"
+                    f"📊 Original aspect ratio: <b>{img_ratio:.3f}</b> | "
+                    f"KDP target ratio: <b>{target_ratio:.3f}</b> "
+                    f"(off by {ratio_diff*100:.1f}%)"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
                 force_exact = st.checkbox(
-                    "🔧 Ép đúng kích thước KDP (có thể làm méo ảnh)",
+                    "🔧 Force exact KDP dimensions (may stretch the image)",
                     value=False,
-                    help="Nếu tick: ảnh sẽ được resize chính xác theo kích thước KDP, "
-                    "nhưng có thể bị méo nếu tỉ lệ khác nhau nhiều. "
-                    "Nếu KHÔNG tick: giữ tỉ lệ gốc, chiều cao sẽ tự tính.",
+                    help="If checked: image will be resized to the exact KDP size, "
+                    "but may look stretched if aspect ratios differ. "
+                    "If unchecked: original aspect ratio is preserved.",
                 )
             else:
-                st.success("✨ Tỉ lệ ảnh gốc khớp với KDP — không bị méo!")
+                st.success("✨ Original aspect ratio matches KDP — no distortion!")
 
         else:
             # Custom mode
             resize_for_print = st.checkbox(
                 "Resize for a specific print width",
                 value=False,
-                help="Tick để tự nhập kích thước in tùy chỉnh.",
+                help="Check this to enter a custom print width.",
             )
 
             if resize_for_print:
@@ -304,8 +409,8 @@ else:
 
 st.markdown("---")
 st.markdown(
-    "<p style='text-align:center;color:#94a3b8;font-size:0.85rem;'>"
-    "Made for self-publishers • KDPEasy AI Upscaler"
-    "</p>",
+    f"<p style='text-align:center;color:#94a3b8;font-size:0.85rem;'>"
+    f"✨ Exclusive tool by <b>{BRAND_NAME}</b> • Made for self-publishers"
+    f"</p>",
     unsafe_allow_html=True,
 )
