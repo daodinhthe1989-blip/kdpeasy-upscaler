@@ -1,6 +1,9 @@
 import io
+import hashlib
+import requests
 from PIL import Image
 import streamlit as st
+import replicate
 
 # ═══════════════════════════════════════════════════════════════════
 # 🔐 SECURITY SETTINGS — Edit these values to customize your app
@@ -9,6 +12,9 @@ APP_PASSWORD = "KDPVIP2026"   # Change this to your secret password
 BRAND_NAME = "KDPEasy Studio"  # Change this to your brand name
 WELCOME_MESSAGE = "Welcome, VIP Customer!"  # Customize this greeting
 # ═══════════════════════════════════════════════════════════════════
+
+# 🤖 AI Model Configuration
+AI_MODEL = "nightmareai/real-esrgan:f121d640bd286e1fdc67f9799164c1d5be36ff74576ee11c803ae5b665dd46aa"
 
 st.set_page_config(
     page_title="KDPEasy AI Upscaler",
@@ -54,6 +60,13 @@ CUSTOM_CSS = """
         border-left: 4px solid #4f46e5;
         margin-bottom: 1rem;
     }
+    .ai-card {
+        background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+        padding: 1rem 1.2rem;
+        border-radius: 10px;
+        border-left: 4px solid #f59e0b;
+        margin-bottom: 1rem;
+    }
     .login-card {
         background: white;
         padding: 2.5rem 2rem;
@@ -63,20 +76,13 @@ CUSTOM_CSS = """
         margin: 3rem auto;
         text-align: center;
     }
-    .login-card h2 {
-        color: #1f2937;
-        margin-bottom: 0.5rem;
-    }
+    .login-card h2 { color: #1f2937; margin-bottom: 0.5rem; }
     .login-card .brand {
-        color: #4f46e5;
-        font-weight: 700;
-        font-size: 1.1rem;
-        margin-bottom: 1.5rem;
+        color: #4f46e5; font-weight: 700;
+        font-size: 1.1rem; margin-bottom: 1.5rem;
     }
     .login-card .desc {
-        color: #64748b;
-        font-size: 0.95rem;
-        margin-bottom: 1.5rem;
+        color: #64748b; font-size: 0.95rem; margin-bottom: 1.5rem;
     }
 </style>
 """
@@ -88,11 +94,9 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 # ═══════════════════════════════════════════════════════════════════
 def check_password():
     """Returns True if user has entered the correct password."""
-
     if st.session_state.get("password_correct", False):
         return True
 
-    # Show login screen
     st.markdown(
         f"""
         <div class='login-card'>
@@ -134,13 +138,12 @@ def check_password():
     return False
 
 
-# Stop the app here if password is not correct
 if not check_password():
     st.stop()
 
 
 # ═══════════════════════════════════════════════════════════════════
-# 🎨 MAIN APP (only loads after password is correct)
+# 🎨 MAIN APP
 # ═══════════════════════════════════════════════════════════════════
 
 TARGET_DPI = 300
@@ -161,6 +164,44 @@ KDP_BOOK_SIZES = {
 }
 
 
+def get_image_hash(img_bytes: bytes, suffix: str = "") -> str:
+    """Generate hash for caching AI results."""
+    return hashlib.md5(img_bytes + suffix.encode()).hexdigest()
+
+
+def ai_upscale(image_bytes: bytes, scale: int) -> bytes:
+    """Upscale image using Real-ESRGAN via Replicate API."""
+    api_token = st.secrets.get("REPLICATE_API_TOKEN", None)
+    if not api_token:
+        raise ValueError(
+            "AI service is not configured. Please contact support."
+        )
+
+    client = replicate.Client(api_token=api_token)
+
+    output = client.run(
+        AI_MODEL,
+        input={
+            "image": io.BytesIO(image_bytes),
+            "scale": scale,
+            "face_enhance": False,
+        },
+    )
+
+    # Handle different return types from Replicate
+    if isinstance(output, list):
+        output = output[0]
+
+    # If it's a FileOutput object, read it directly
+    if hasattr(output, "read"):
+        return output.read()
+
+    # Otherwise it's a URL — download it
+    response = requests.get(str(output), timeout=120)
+    response.raise_for_status()
+    return response.content
+
+
 def convert_to_300dpi(
     image: Image.Image,
     output_format: str,
@@ -175,10 +216,8 @@ def convert_to_300dpi(
         target_w_px = int(round(target_width_in * TARGET_DPI))
 
         if force_exact and target_height_in:
-            # Force exact KDP dimensions (may distort if aspect ratio differs)
             target_h_px = int(round(target_height_in * TARGET_DPI))
         else:
-            # Preserve original aspect ratio
             aspect = img.height / img.width
             target_h_px = int(round(target_w_px * aspect))
 
@@ -206,11 +245,15 @@ with header_col2:
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🔒 Logout", width="stretch"):
         st.session_state["password_correct"] = False
+        if "ai_cache" in st.session_state:
+            del st.session_state["ai_cache"]
+        if "converted" in st.session_state:
+            del st.session_state["converted"]
         st.rerun()
 
 st.markdown(
     f"<p style='color:#64748b;font-size:1.05rem;'>"
-    f"Convert your images to print-ready <b>300 DPI</b> for KDP and other publishing platforms.<br>"
+    f"Enhance your images with <b>AI</b> and convert to print-ready <b>300 DPI</b> for KDP.<br>"
     f"<span style='color:#4f46e5;font-weight:600;'>✨ Exclusive tool by {BRAND_NAME}</span>"
     f"</p>",
     unsafe_allow_html=True,
@@ -229,13 +272,15 @@ if uploaded_file is None:
         "<div class='info-card'>"
         "<b>How it works</b><br>"
         "1. Upload a JPG or PNG image<br>"
-        "2. Choose a KDP book size preset (or custom)<br>"
-        "3. Pick PNG or JPG output<br>"
+        "2. (Optional) Enhance quality with AI Upscaler<br>"
+        "3. Choose a KDP book size preset<br>"
         "4. Download your 300 DPI print-ready file"
         "</div>",
         unsafe_allow_html=True,
     )
 else:
+    # Read original image
+    original_bytes = uploaded_file.getvalue()
     image = Image.open(uploaded_file)
     orig_w, orig_h = image.size
     orig_dpi = image.info.get("dpi", (72, 72))
@@ -267,6 +312,40 @@ else:
             help="PNG preserves transparency; JPG has smaller file size.",
         )
 
+        # ─── AI Enhancement Section ─────────────────────────────────
+        st.markdown("**🤖 AI Enhancement**")
+        use_ai = st.checkbox(
+            "✨ Enhance with AI (Real-ESRGAN)",
+            value=False,
+            help="Use AI to enhance image quality and increase resolution. "
+                 "Highly recommended for small or low-quality images.",
+        )
+
+        ai_scale = 4
+        if use_ai:
+            ai_scale = st.radio(
+                "AI scale factor",
+                options=[2, 4],
+                index=1,
+                horizontal=True,
+                format_func=lambda x: f"{x}x ({'faster' if x == 2 else 'best quality'})",
+                help="2x is faster. 4x produces the best quality.",
+            )
+            est_new_w = orig_w * ai_scale
+            est_new_h = orig_h * ai_scale
+            st.markdown(
+                f"""
+                <div class='ai-card'>
+                    <b>🎯 After AI Enhancement:</b><br>
+                    📐 New dimensions: <b>{est_new_w} × {est_new_h} px</b><br>
+                    ⏱️ Processing time: ~10-30 seconds<br>
+                    💎 Quality: Significantly improved
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        # ─── KDP Book Size Section ──────────────────────────────────
         st.markdown("**📚 KDP Book Size**")
         book_size_label = st.selectbox(
             "Select KDP book size",
@@ -283,7 +362,6 @@ else:
         preset = KDP_BOOK_SIZES[book_size_label]
 
         if preset is not None:
-            # Preset mode — KDP book size selected
             target_width_in, target_height_in = preset
             needed_w_px = int(target_width_in * TARGET_DPI)
             needed_h_px = int(target_height_in * TARGET_DPI)
@@ -293,23 +371,34 @@ else:
                 f"📐 **Required pixels (300 DPI):** {needed_w_px} × {needed_h_px} px"
             )
 
-            # Check pixel sufficiency
-            if orig_w >= needed_w_px and orig_h >= needed_h_px:
-                st.success("✅ **Image has enough pixels** — excellent print quality!")
-            elif orig_w >= needed_w_px * 0.7 and orig_h >= needed_h_px * 0.7:
+            # Estimate post-AI dimensions
+            effective_w = orig_w * (ai_scale if use_ai else 1)
+            effective_h = orig_h * (ai_scale if use_ai else 1)
+
+            if effective_w >= needed_w_px and effective_h >= needed_h_px:
+                if use_ai:
+                    st.success("✅ **With AI enhancement, your image will have enough pixels!**")
+                else:
+                    st.success("✅ **Image has enough pixels** — excellent print quality!")
+            elif effective_w >= needed_w_px * 0.7 and effective_h >= needed_h_px * 0.7:
                 st.warning(
-                    f"⚠️ **Image is slightly small** — will be upscaled with Lanczos. "
-                    f"Acceptable quality.  \n"
-                    f"Recommended: source image ≥ {needed_w_px} × {needed_h_px} px."
+                    f"⚠️ **Image is slightly small.** "
+                    f"{'AI enhancement helps, but ' if not use_ai else ''}"
+                    f"recommended source: ≥ {needed_w_px} × {needed_h_px} px."
                 )
             else:
-                st.error(
-                    f"❌ **Image is TOO SMALL!** Print will be visibly blurry.  \n"
-                    f"Need at least {needed_w_px} × {needed_h_px} px. "
-                    f"Recommended: use an AI Upscaler first (e.g., Upscayl)."
-                )
+                if not use_ai:
+                    st.error(
+                        f"❌ **Image is TOO SMALL!** Print will be blurry.  \n"
+                        f"💡 **Tip:** Enable AI Enhancement above for better quality!"
+                    )
+                else:
+                    st.warning(
+                        f"⚠️ Image is small even with AI. "
+                        f"Recommended: source ≥ {needed_w_px // ai_scale} × {needed_h_px // ai_scale} px."
+                    )
 
-            # Aspect ratio comparison
+            # Aspect ratio check
             img_ratio = orig_w / orig_h
             target_ratio = target_width_in / target_height_in
             ratio_diff = abs(img_ratio - target_ratio) / target_ratio
@@ -317,8 +406,8 @@ else:
             if ratio_diff > 0.02:
                 st.markdown(
                     f"<div style='font-size:0.85rem;color:#64748b;'>"
-                    f"📊 Original aspect ratio: <b>{img_ratio:.3f}</b> | "
-                    f"KDP target ratio: <b>{target_ratio:.3f}</b> "
+                    f"📊 Original ratio: <b>{img_ratio:.3f}</b> | "
+                    f"KDP target: <b>{target_ratio:.3f}</b> "
                     f"(off by {ratio_diff*100:.1f}%)"
                     f"</div>",
                     unsafe_allow_html=True,
@@ -326,21 +415,16 @@ else:
                 force_exact = st.checkbox(
                     "🔧 Force exact KDP dimensions (may stretch the image)",
                     value=False,
-                    help="If checked: image will be resized to the exact KDP size, "
-                    "but may look stretched if aspect ratios differ. "
-                    "If unchecked: original aspect ratio is preserved.",
                 )
             else:
-                st.success("✨ Original aspect ratio matches KDP — no distortion!")
+                st.success("✨ Aspect ratio matches KDP — no distortion!")
 
         else:
             # Custom mode
             resize_for_print = st.checkbox(
                 "Resize for a specific print width",
                 value=False,
-                help="Check this to enter a custom print width.",
             )
-
             if resize_for_print:
                 target_width_in = st.number_input(
                     "Target print width (inches)",
@@ -357,10 +441,46 @@ else:
 
         st.markdown("")
 
-        if st.button("✨ Convert to 300 DPI", width="stretch"):
-            with st.spinner("Converting…"):
+        # ─── Main Convert Button ────────────────────────────────────
+        if st.button("✨ Process & Convert to 300 DPI", width="stretch"):
+            working_image = image
+
+            # Step 1: AI Upscale (if enabled)
+            if use_ai:
+                cache_key = get_image_hash(original_bytes, f"_ai_{ai_scale}x")
+
+                if "ai_cache" not in st.session_state:
+                    st.session_state["ai_cache"] = {}
+
+                if cache_key in st.session_state["ai_cache"]:
+                    working_image = st.session_state["ai_cache"][cache_key]
+                    st.info("✨ Using previously enhanced image (cached)")
+                else:
+                    try:
+                        with st.spinner(
+                            f"🤖 AI is enhancing your image ({ai_scale}x)... "
+                            f"This may take 10-30 seconds. Please wait..."
+                        ):
+                            upscaled_bytes = ai_upscale(original_bytes, ai_scale)
+                            working_image = Image.open(io.BytesIO(upscaled_bytes))
+                            st.session_state["ai_cache"][cache_key] = working_image
+
+                        new_w, new_h = working_image.size
+                        st.success(
+                            f"✨ AI Enhancement complete! "
+                            f"New dimensions: **{new_w} × {new_h} px**"
+                        )
+                    except Exception as e:
+                        st.error(
+                            f"❌ AI Enhancement failed. Please try again or contact support.  \n"
+                            f"Error: {str(e)[:200]}"
+                        )
+                        st.stop()
+
+            # Step 2: DPI Conversion
+            with st.spinner("Converting to 300 DPI..."):
                 buf, new_size = convert_to_300dpi(
-                    image,
+                    working_image,
                     output_format,
                     target_width_in,
                     target_height_in,
@@ -371,9 +491,12 @@ else:
                     "format": output_format,
                     "size": new_size,
                     "name": uploaded_file.name.rsplit(".", 1)[0],
+                    "used_ai": use_ai,
+                    "ai_scale": ai_scale if use_ai else None,
                 }
-            st.success("Done! Your image is ready for download.")
+            st.success("✅ Done! Your image is ready for download.")
 
+    # ─── Converted Image Display ──────────────────────────────────
     if "converted" in st.session_state:
         st.markdown("---")
         st.subheader("✅ Converted Image")
@@ -382,15 +505,25 @@ else:
         new_w, new_h = conv["size"]
         ext = "png" if conv["format"] == "PNG" else "jpg"
         mime = "image/png" if conv["format"] == "PNG" else "image/jpeg"
-        out_name = f"{conv['name']}_300dpi.{ext}"
+
+        # Add suffix to filename if AI was used
+        suffix = f"_ai{conv['ai_scale']}x_300dpi" if conv.get("used_ai") else "_300dpi"
+        out_name = f"{conv['name']}{suffix}.{ext}"
 
         col_a, col_b = st.columns([1, 1], gap="large")
         with col_a:
             st.image(conv["buf"], caption="Preview", width="stretch")
         with col_b:
+            ai_badge = (
+                f"<span style='background:#fef3c7;color:#92400e;padding:0.2rem 0.5rem;"
+                f"border-radius:6px;font-size:0.8rem;font-weight:600;'>"
+                f"🤖 AI Enhanced ({conv['ai_scale']}x)</span><br><br>"
+                if conv.get("used_ai") else ""
+            )
             st.markdown(
                 f"""
                 <div class='info-card'>
+                    {ai_badge}
                     <b>Output:</b> {conv['format']}<br>
                     <b>Dimensions:</b> {new_w} × {new_h} px<br>
                     <b>DPI:</b> 300 × 300<br>
@@ -410,7 +543,7 @@ else:
 st.markdown("---")
 st.markdown(
     f"<p style='text-align:center;color:#94a3b8;font-size:0.85rem;'>"
-    f"✨ Exclusive tool by <b>{BRAND_NAME}</b> • Made for self-publishers"
+    f"✨ Exclusive tool by <b>{BRAND_NAME}</b> • Powered by Real-ESRGAN AI"
     f"</p>",
     unsafe_allow_html=True,
 )
