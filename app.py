@@ -169,6 +169,32 @@ def get_image_hash(img_bytes: bytes, suffix: str = "") -> str:
     return hashlib.md5(img_bytes + suffix.encode()).hexdigest()
 
 
+# Replicate GPU max input pixels (~2M, leaves headroom under 2,096,704 hard limit)
+MAX_INPUT_PIXELS = 2_000_000
+
+
+def _preshrink_for_gpu(image_bytes: bytes) -> bytes:
+    """Resize image down if it exceeds Replicate's GPU memory limit."""
+    img = Image.open(io.BytesIO(image_bytes))
+    total_pixels = img.width * img.height
+
+    if total_pixels <= MAX_INPUT_PIXELS:
+        return image_bytes
+
+    # Calculate scale factor to fit under limit
+    scale_factor = (MAX_INPUT_PIXELS / total_pixels) ** 0.5
+    new_w = int(img.width * scale_factor)
+    new_h = int(img.height * scale_factor)
+    img = img.resize((new_w, new_h), Image.LANCZOS)
+
+    buf = io.BytesIO()
+    if img.mode in ("RGBA", "P"):
+        img = img.convert("RGB")
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf.getvalue()
+
+
 def ai_upscale(image_bytes: bytes, scale: int) -> bytes:
     """Upscale image using Real-ESRGAN via Replicate API."""
     api_token = st.secrets.get("REPLICATE_API_TOKEN", None)
@@ -177,12 +203,15 @@ def ai_upscale(image_bytes: bytes, scale: int) -> bytes:
             "AI service is not configured. Please contact support."
         )
 
+    # Pre-shrink if image exceeds GPU memory limit
+    safe_bytes = _preshrink_for_gpu(image_bytes)
+
     client = replicate.Client(api_token=api_token)
 
     output = client.run(
         AI_MODEL,
         input={
-            "image": io.BytesIO(image_bytes),
+            "image": io.BytesIO(safe_bytes),
             "scale": scale,
             "face_enhance": False,
         },
