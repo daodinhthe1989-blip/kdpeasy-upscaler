@@ -481,6 +481,13 @@ else:
                 if "ai_cache" not in st.session_state:
                     st.session_state["ai_cache"] = {}
 
+                # Keep only the current image's cached result. Without this,
+                # processing many pages back-to-back in one session (no page
+                # reload) accumulates every upscaled image in server memory
+                # until the app gets killed for using too much RAM.
+                if cache_key not in st.session_state["ai_cache"]:
+                    st.session_state["ai_cache"] = {}
+
                 if cache_key in st.session_state["ai_cache"]:
                     working_image = st.session_state["ai_cache"][cache_key]
                     st.info("✨ Using previously enhanced image (cached)")
